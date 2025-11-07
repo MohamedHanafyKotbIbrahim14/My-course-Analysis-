@@ -1,78 +1,163 @@
+import streamlit as st
+import pandas as pd
 import os
 
-# PASTE YOUR FOLDER PATH HERE between the quotes:
-# Right-click the folder -> "Copy as path" -> Paste below
-folder_path = r"C:\Users\mhana\Desktop\aaa analysis\Astra files (2019-2025)"
+st.set_page_config(page_title="CSV Viewer", layout="wide")
 
-print("\n" + "="*70)
-print("TESTING YOUR FOLDER PATH")
-print("="*70)
-print(f"\nTrying to access: {folder_path}")
-print("-"*70)
+st.title("📊 CSV File Viewer - LOCAL")
+st.caption("This app runs on YOUR computer and reads YOUR local files")
 
-# Test 1: Does it exist?
-if os.path.exists(folder_path):
-    print("✅ SUCCESS! Folder exists!")
-else:
-    print("❌ FAILED! Folder does NOT exist!")
-    print("\nTroubleshooting:")
-    print("1. Copy the folder path from Windows Explorer address bar")
-    print("2. Right-click folder -> Properties -> Location")
-    print("3. Make sure spelling is EXACTLY correct")
-    print("\nTry these variations:")
+# Sidebar
+st.sidebar.header("📁 Folder Settings")
+
+folder_path = st.sidebar.text_input(
+    "Enter Folder Path:",
+    value="",
+    placeholder="C:/Users/mhana/Desktop/folder"
+)
+
+if folder_path:
+    folder_path = folder_path.strip().replace('\\', '/')
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Tips:**")
+st.sidebar.info("""
+- Copy path from Windows Explorer address bar
+- Or right-click folder → Copy as path
+- Use forward slashes: C:/Users/...
+""")
+
+# Main content
+if not folder_path:
+    st.info("👈 **Step 1:** Enter your folder path in the sidebar")
+    st.markdown("""
+    ### How to Get Your Folder Path:
     
-    # Try without spaces
-    alt1 = folder_path.replace(" ", "")
-    if os.path.exists(alt1):
-        print(f"✅ Found it without spaces: {alt1}")
+    **Method 1:**
+    1. Open Windows Explorer
+    2. Navigate to your folder
+    3. Click the address bar at top
+    4. Copy the path (Ctrl+C)
+    5. Paste in sidebar
     
-    input("\nPress Enter to exit...")
-    exit()
+    **Method 2:**
+    1. Hold Shift
+    2. Right-click your folder
+    3. Click "Copy as path"
+    4. Paste in sidebar (it will auto-fix the format)
+    """)
+    st.stop()
 
-# Test 2: Is it a folder?
-if os.path.isdir(folder_path):
-    print("✅ It's a valid folder!")
-else:
-    print("❌ It exists but it's not a folder!")
-    exit()
+# Validate path
+if not os.path.exists(folder_path):
+    st.error(f"❌ Folder not found: `{folder_path}`")
+    st.warning("**Double-check:**")
+    st.write("1. Is the spelling correct?")
+    st.write("2. Does the folder still exist?")
+    st.write("3. Try copying the path directly from Windows Explorer")
+    st.stop()
 
-# Test 3: Can we read it?
+if not os.path.isdir(folder_path):
+    st.error("❌ This path exists but is not a folder")
+    st.stop()
+
+# Read folder
 try:
-    files = os.listdir(folder_path)
-    print(f"✅ Can read folder! Found {len(files)} items inside")
-    
-    # Show first 10 items
-    print("\nFirst 10 items:")
-    for i, item in enumerate(files[:10], 1):
-        item_path = os.path.join(folder_path, item)
-        if os.path.isdir(item_path):
-            print(f"  {i}. 📁 {item}")
-        else:
-            ext = os.path.splitext(item)[1]
-            print(f"  {i}. 📄 {item} ({ext})")
-    
-    if len(files) > 10:
-        print(f"  ... and {len(files) - 10} more items")
-    
-    # Count CSV files
-    csv_files = [f for f in files if f.lower().endswith('.csv')]
-    print(f"\n📊 CSV files found: {len(csv_files)}")
-    if csv_files:
-        print("CSV files:")
-        for csv in csv_files[:5]:
-            print(f"  • {csv}")
-    
-    # Count other common types
-    xlsx_files = [f for f in files if f.lower().endswith(('.xlsx', '.xls'))]
-    if xlsx_files:
-        print(f"\n📗 Excel files found: {len(xlsx_files)}")
-    
-    print("\n" + "="*70)
-    print("✅ YOUR PATH WORKS! Use this in the Streamlit app:")
-    print(folder_path)
-    print("="*70)
-    
+    all_items = os.listdir(folder_path)
+    st.sidebar.success(f"✅ Folder found!")
+    st.sidebar.info(f"Total items: {len(all_items)}")
 except Exception as e:
-    print(f"❌ Error reading folder: {e}")
+    st.error(f"Cannot read folder: {str(e)}")
+    st.stop()
 
-input("\nPress Enter to exit...")
+# Filter for CSV files
+csv_files = [f for f in all_items if f.lower().endswith('.csv')]
+
+if len(csv_files) == 0:
+    st.warning("⚠️ No CSV files found in this folder")
+    
+    st.subheader("What's in this folder:")
+    
+    # Group by file type
+    file_types = {}
+    for item in all_items:
+        full_path = os.path.join(folder_path, item)
+        if os.path.isfile(full_path):
+            ext = os.path.splitext(item)[1].lower() or "(no extension)"
+            if ext not in file_types:
+                file_types[ext] = []
+            file_types[ext].append(item)
+        else:
+            if "(folders)" not in file_types:
+                file_types["(folders)"] = []
+            file_types["(folders)"].append(item)
+    
+    # Display file types
+    for ext, files in sorted(file_types.items()):
+        with st.expander(f"{ext} - {len(files)} files"):
+            for f in files[:20]:
+                st.write(f"• {f}")
+            if len(files) > 20:
+                st.write(f"... and {len(files)-20} more")
+    
+    st.info("💡 If your files are Excel, let me know and I'll update the app!")
+    st.stop()
+
+# Show CSV files
+st.sidebar.success(f"📄 Found {len(csv_files)} CSV files")
+
+selected_file = st.sidebar.selectbox("Select CSV file:", csv_files)
+
+if selected_file:
+    file_path = os.path.join(folder_path, selected_file)
+    
+    # File header
+    st.subheader(f"📄 {selected_file}")
+    
+    try:
+        # Read CSV
+        df = pd.read_csv(file_path)
+        
+        # Metrics
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Rows", f"{len(df):,}")
+        col2.metric("Columns", len(df.columns))
+        col3.metric("File Size", f"{os.path.getsize(file_path)/1024:.1f} KB")
+        
+        # Display options
+        st.markdown("---")
+        col_a, col_b = st.columns([1, 3])
+        with col_a:
+            show_rows = st.number_input("Rows to display:", 5, 1000, 100)
+        
+        # Show data
+        st.dataframe(df.head(show_rows), use_container_width=True, height=400)
+        
+        # Additional info
+        col_x, col_y = st.columns(2)
+        
+        with col_x:
+            with st.expander("📋 Column Info"):
+                col_info = pd.DataFrame({
+                    'Column': df.columns,
+                    'Type': df.dtypes.values,
+                    'Non-Null': df.count().values,
+                    'Null': df.isnull().sum().values
+                })
+                st.dataframe(col_info, use_container_width=True)
+        
+        with col_y:
+            with st.expander("📊 Statistics"):
+                st.dataframe(df.describe(), use_container_width=True)
+        
+        # Download
+        st.download_button(
+            "⬇️ Download CSV",
+            df.to_csv(index=False),
+            file_name=selected_file,
+            mime="text/csv"
+        )
+        
+    except Exception as e:
+        st.error(f"Error reading CSV: {str(e)}")
+        st.info("Make sure the file is a valid CSV format")
