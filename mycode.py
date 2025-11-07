@@ -1,110 +1,78 @@
-import streamlit as st
-import pandas as pd
 import os
 
-# Page config
-st.set_page_config(page_title="CSV Viewer", layout="wide")
+# PASTE YOUR FOLDER PATH HERE between the quotes:
+# Right-click the folder -> "Copy as path" -> Paste below
+folder_path = r"C:\Users\mhana\Desktop\aaa analysis\Astra files (2019-2025)"
 
-# Title
-st.title("📊 CSV File Viewer")
+print("\n" + "="*70)
+print("TESTING YOUR FOLDER PATH")
+print("="*70)
+print(f"\nTrying to access: {folder_path}")
+print("-"*70)
 
-# Sidebar
-st.sidebar.header("Settings")
+# Test 1: Does it exist?
+if os.path.exists(folder_path):
+    print("✅ SUCCESS! Folder exists!")
+else:
+    print("❌ FAILED! Folder does NOT exist!")
+    print("\nTroubleshooting:")
+    print("1. Copy the folder path from Windows Explorer address bar")
+    print("2. Right-click folder -> Properties -> Location")
+    print("3. Make sure spelling is EXACTLY correct")
+    print("\nTry these variations:")
+    
+    # Try without spaces
+    alt1 = folder_path.replace(" ", "")
+    if os.path.exists(alt1):
+        print(f"✅ Found it without spaces: {alt1}")
+    
+    input("\nPress Enter to exit...")
+    exit()
 
-# Folder path input
-folder_path = st.sidebar.text_input(
-    "Folder Path:", 
-    value="",
-    placeholder="Paste your folder path here"
-)
+# Test 2: Is it a folder?
+if os.path.isdir(folder_path):
+    print("✅ It's a valid folder!")
+else:
+    print("❌ It exists but it's not a folder!")
+    exit()
 
-# Convert Windows backslashes
-if folder_path:
-    folder_path = folder_path.strip().replace('\\', '/')
-
-st.sidebar.markdown("---")
-
-# Main area
-if not folder_path:
-    st.info("👈 Enter your folder path in the sidebar")
-    st.markdown("""
-    ### Instructions:
-    1. Paste your folder path in the sidebar
-    2. Example: `C:/Users/mhana/Desktop/folder`
-    3. Select a CSV file from the list
-    """)
-    st.stop()
-
-# Check if folder exists
-if not os.path.exists(folder_path):
-    st.error(f"❌ Folder not found: {folder_path}")
-    st.stop()
-
-if not os.path.isdir(folder_path):
-    st.error(f"❌ Not a folder: {folder_path}")
-    st.stop()
-
-# Get all files
+# Test 3: Can we read it?
 try:
-    all_items = os.listdir(folder_path)
-    st.sidebar.success(f"✅ Found {len(all_items)} items")
+    files = os.listdir(folder_path)
+    print(f"✅ Can read folder! Found {len(files)} items inside")
+    
+    # Show first 10 items
+    print("\nFirst 10 items:")
+    for i, item in enumerate(files[:10], 1):
+        item_path = os.path.join(folder_path, item)
+        if os.path.isdir(item_path):
+            print(f"  {i}. 📁 {item}")
+        else:
+            ext = os.path.splitext(item)[1]
+            print(f"  {i}. 📄 {item} ({ext})")
+    
+    if len(files) > 10:
+        print(f"  ... and {len(files) - 10} more items")
+    
+    # Count CSV files
+    csv_files = [f for f in files if f.lower().endswith('.csv')]
+    print(f"\n📊 CSV files found: {len(csv_files)}")
+    if csv_files:
+        print("CSV files:")
+        for csv in csv_files[:5]:
+            print(f"  • {csv}")
+    
+    # Count other common types
+    xlsx_files = [f for f in files if f.lower().endswith(('.xlsx', '.xls'))]
+    if xlsx_files:
+        print(f"\n📗 Excel files found: {len(xlsx_files)}")
+    
+    print("\n" + "="*70)
+    print("✅ YOUR PATH WORKS! Use this in the Streamlit app:")
+    print(folder_path)
+    print("="*70)
+    
 except Exception as e:
-    st.error(f"Error reading folder: {e}")
-    st.stop()
+    print(f"❌ Error reading folder: {e}")
 
-# Filter CSV files
-csv_files = [f for f in all_items if f.lower().endswith('.csv')]
-
-if len(csv_files) == 0:
-    st.warning("⚠️ No CSV files found in this folder")
-    
-    # Show what's in the folder
-    st.subheader("Files in folder:")
-    file_types = {}
-    for item in all_items[:20]:  # Show first 20
-        ext = os.path.splitext(item)[1] or "(no extension)"
-        if ext not in file_types:
-            file_types[ext] = []
-        file_types[ext].append(item)
-    
-    for ext, files in file_types.items():
-        st.write(f"**{ext}:** {len(files)} files")
-        for f in files[:3]:
-            st.write(f"  - {f}")
-    
-    st.stop()
-
-# Show CSV count
-st.sidebar.success(f"📄 {len(csv_files)} CSV files found")
-
-# Select file
-selected_file = st.sidebar.selectbox("Select CSV file:", csv_files)
-
-if selected_file:
-    st.subheader(f"File: {selected_file}")
-    
-    file_path = os.path.join(folder_path, selected_file)
-    
-    try:
-        # Read CSV
-        df = pd.read_csv(file_path)
-        
-        # Show metrics
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Rows", len(df))
-        col2.metric("Columns", len(df.columns))
-        col3.metric("Size", f"{os.path.getsize(file_path)/1024:.1f} KB")
-        
-        # Show data
-        st.dataframe(df, use_container_width=True, height=400)
-        
-        # Download button
-        st.download_button(
-            "Download CSV",
-            df.to_csv(index=False),
-            file_name=selected_file,
-            mime="text/csv"
-        )
-        
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
+input("\nPress Enter to exit...")
