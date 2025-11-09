@@ -80,8 +80,8 @@ def process_dataframe(df):
     
     # COLUMN D (index 3): ALWAYS contains Final Mark + Grade
     final_col = df.iloc[:, 3]  # Column D
-    df['Final_Mark'] = final_col.astype(str).str.extract('(\d+)').astype(float)
-    df['Grade'] = final_col.astype(str).str.extract('([A-Z]{2,3})')[0]
+    df['Final_Mark'] = final_col.astype(str).str.extract(r'(\d+)').astype(float)
+    df['Grade'] = final_col.astype(str).str.extract(r'([A-Z]{2,3})')[0]
     
     # Clean Student ID
     df['Student ID'] = df.iloc[:, 0].astype(str).str.strip()
