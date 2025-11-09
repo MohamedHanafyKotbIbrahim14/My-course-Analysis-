@@ -164,22 +164,43 @@ if not courses_data:
 st.success(f"✅ Loaded {len(courses_data)} courses from Google Drive!")
 
 # Show available courses
-st.subheader("📁 Available Courses")
-for course in courses_data:
-    st.write(f"- **{course['course']}** ({course['count']} students)")
+st.subheader("📁 Select Courses to Compare")
+
+# Create multiselect for course selection
+course_options = [f"{course['course']} ({course['count']} students)" for course in courses_data]
+selected_courses_display = st.multiselect(
+    "Choose courses to include in the comparison:",
+    options=course_options,
+    default=course_options,  # All selected by default
+    help="Select one or more courses to compare. You can remove courses by clicking the X."
+)
+
+# Map selected display names back to course data
+selected_indices = [course_options.index(display) for display in selected_courses_display]
+selected_courses_data = [courses_data[i] for i in selected_indices]
+
+# Show selection summary
+if selected_courses_data:
+    st.info(f"📊 Selected {len(selected_courses_data)} course(s) for comparison")
+else:
+    st.warning("⚠️ Please select at least one course to generate a report")
 
 st.markdown("---")
 
-# Generate Report Button
-if st.button("📊 Generate Comparison Report", type="primary"):
-    # Store in session state
-    st.session_state.courses_data = courses_data
-    st.session_state.lic_info = {
-        'name': lic_name,
-        'phone': lic_phone,
-        'course_code': lic_course
-    }
-    st.success(f"✅ Report generated with {len(courses_data)} course(s)!")
+# Generate Report Button - only show if courses are selected
+if selected_courses_data:
+    if st.button("📊 Generate Comparison Report", type="primary"):
+        # Store in session state
+        st.session_state.courses_data = selected_courses_data
+        st.session_state.lic_info = {
+            'name': lic_name,
+            'phone': lic_phone,
+            'course_code': lic_course
+        }
+        st.success(f"✅ Report generated with {len(selected_courses_data)} course(s)!")
+else:
+    st.button("📊 Generate Comparison Report", type="primary", disabled=True)
+    st.caption("👆 Select at least one course to enable report generation")
 
 # Display comparison table if data exists
 if 'courses_data' in st.session_state and st.session_state.courses_data:
