@@ -1,127 +1,73 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
-import msal
-import requests
+from datetime import datetime
+import io
+import gdown
 import os
-from dotenv import load_dotenv
-import json
+import tempfile
 
-# Load environment variables
-load_dotenv()
+st.set_page_config(page_title="Multi-Course Comparison Report", layout="wide")
 
-st.set_page_config(page_title="Course Analysis Tool - OneDrive", layout="wide")
+st.title("📑 Multi-Course Comparison Report")
 
-st.title("📊 Advanced Course Analysis Tool - OneDrive Edition")
+st.markdown("---")
 
-# Microsoft Graph API Configuration
-CLIENT_ID = os.getenv("CLIENT_ID")
-TENANT_ID = os.getenv("TENANT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
+# Google Drive configuration
+# You'll paste your Google Drive folder link here
+GOOGLE_DRIVE_FOLDER = st.secrets.get("GOOGLE_DRIVE_FOLDER", "")
 
-# For local development
-REDIRECT_URI = "http://localhost:8501"
-
-# Check if credentials are loaded
-if not CLIENT_ID or not TENANT_ID or not CLIENT_SECRET:
-    st.error("❌ Missing credentials! Please create a `.env` file with CLIENT_ID, TENANT_ID, and CLIENT_SECRET")
-    st.stop()
-
-# Initialize session state
-if 'access_token' not in st.session_state:
-    st.session_state.access_token = None
-if 'user_info' not in st.session_state:
-    st.session_state.user_info = None
-if 'selected_folder_id' not in st.session_state:
-    st.session_state.selected_folder_id = None
-if 'csv_files' not in st.session_state:
-    st.session_state.csv_files = []
-
-def get_auth_url():
-    """Generate Microsoft login URL"""
-    app = msal.ConfidentialClientApplication(
-        CLIENT_ID,
-        authority=AUTHORITY,
-        client_credential=CLIENT_SECRET
-    )
+# Cache the data loading to avoid repeated downloads
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def load_course_data_from_drive(folder_url):
+    """
+    Load CSV files from Google Drive folder and extract summary statistics
+    """
+    if not folder_url:
+        return []
     
-    auth_url = app.get_authorization_request_url(
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI
-    )
-    return auth_url
-
-def get_token_from_code(auth_code):
-    """Exchange authorization code for access token"""
-    app = msal.ConfidentialClientApplication(
-        CLIENT_ID,
-        authority=AUTHORITY,
-        client_credential=CLIENT_SECRET
-    )
-    
-    result = app.acquire_token_by_authorization_code(
-        auth_code,
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI
-    )
-    
-    return result
-
-def get_user_info(access_token):
-    """Get user information from Microsoft Graph"""
-    headers = {'Authorization': f'Bearer {access_token}'}
-    response = requests.get('https://graph.microsoft.com/v1.0/me', headers=headers)
-    if response.status_code == 200:
-        return response.json()
-    return None
-
-def list_onedrive_folders(access_token, folder_id=None):
-    """List folders in OneDrive"""
-    headers = {'Authorization': f'Bearer {access_token}'}
-    
-    if folder_id:
-        url = f'https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}/children'
-    else:
-        url = 'https://graph.microsoft.com/v1.0/me/drive/root/children'
-    
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        items = response.json().get('value', [])
-        folders = [item for item in items if 'folder' in item]
-        return folders
-    return []
-
-def list_csv_files(access_token, folder_id=None):
-    """List CSV files in a OneDrive folder"""
-    headers = {'Authorization': f'Bearer {access_token}'}
-    
-    if folder_id:
-        url = f'https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}/children'
-    else:
-        url = 'https://graph.microsoft.com/v1.0/me/drive/root/children'
-    
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        items = response.json().get('value', [])
-        csv_files = [item for item in items if item['name'].lower().endswith('.csv')]
-        return csv_files
-    return []
-
-def download_file_content(access_token, file_id):
-    """Download file content from OneDrive"""
-    headers = {'Authorization': f'Bearer {access_token}'}
-    url = f'https://graph.microsoft.com/v1.0/me/drive/items/{file_id}/content'
-    
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        return response.content
-    return None
+    try:
+        # Extract folder ID from URL
+        # URL format: https://drive.google.com/drive/folders/FOLDER_ID?usp=sharing
+        folder_id = folder_url.split('/folders/')[1].split('?')[0]
+        
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp()
+        
+        # Download folder contents
+        gdown.download_folder(id=folder_id, output=temp_dir, quiet=False, use_cookies=False)
+        
+        # Process each CSV file
+        courses_data = []
+        for filename in os.listdir(temp_dir):
+            if filename.endswith('.csv') or filename.endswith('.CSV'):
+                file_path = os.path.join(temp_dir, filename)
+                try:
+                    # Read CSV
+                    df = pd.read_csv(file_path)
+                    
+                    # Process dataframe
+                    df = process_dataframe(df)
+                    
+                    # Extract course name from filename
+                    course_name = filename.replace('.csv', '').replace('.CSV', '')
+                    
+                    # Get statistics
+                    stats = get_course_statistics(df, course_name)
+                    courses_data.append(stats)
+                    
+                except Exception as e:
+                    st.warning(f"Could not process {filename}: {str(e)}")
+        
+        # Clean up temp directory
+        import shutil
+        shutil.rmtree(temp_dir)
+        
+        return courses_data
+        
+    except Exception as e:
+        st.error(f"Error loading data from Google Drive: {str(e)}")
+        return []
 
 def process_dataframe(df):
     """Process and clean the dataframe"""
@@ -133,7 +79,7 @@ def process_dataframe(df):
     df.columns = df.columns.str.strip()
     
     # COLUMN D (index 3): ALWAYS contains Final Mark + Grade
-    final_col = df.iloc[:, 3]
+    final_col = df.iloc[:, 3]  # Column D
     df['Final_Mark'] = final_col.astype(str).str.extract('(\d+)').astype(float)
     df['Grade'] = final_col.astype(str).str.extract('([A-Z]{2,3})')[0]
     
@@ -157,363 +103,301 @@ def get_grade_distribution(df):
     
     return distribution
 
-def get_assessment_columns(df):
-    """Get all assessment columns: Column D + Column E onwards"""
-    col_d_name = df.columns[3]
-    assessment_cols = [col_d_name]
+def get_course_statistics(df, course_name):
+    """Get comprehensive statistics for a course"""
+    stats = df['Final_Mark'].describe()
+    grade_dist = get_grade_distribution(df)
     
-    for i in range(4, len(df.columns)):
-        col_name = df.columns[i]
-        if col_name not in ['Final_Mark', 'Grade', 'Student ID']:
-            assessment_cols.append(col_name)
+    return {
+        'course': course_name,
+        'count': int(stats['count']),
+        'mean': stats['mean'],
+        'median': stats['50%'],
+        'std': stats['std'],
+        'min': stats['min'],
+        'max': stats['max'],
+        'q25': stats['25%'],
+        'q75': stats['75%'],
+        'hd_pct': grade_dist['HD']['percentage'],
+        'dn_pct': grade_dist['DN']['percentage'],
+        'cr_pct': grade_dist['CR']['percentage'],
+        'ps_pct': grade_dist['PS']['percentage'],
+        'fl_pct': grade_dist['FL']['percentage']
+    }
+
+# Section 1: LIC Information
+st.header("👤 Lecturer in Charge Information")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    lic_name = st.text_input("LIC Name", value="Hanafy")
+with col2:
+    lic_phone = st.text_input("Phone Number", value="+61404488448")
+with col3:
+    lic_course = st.text_input("Course Code", value="ACTL5115")
+
+st.markdown("---")
+
+# Load data from Google Drive
+st.header("📊 Course Data from Google Drive")
+
+if not GOOGLE_DRIVE_FOLDER:
+    st.error("⚠️ Google Drive folder not configured!")
+    st.info("""
+    **To enable automatic data loading:**
+    1. Add your Google Drive folder link to Streamlit Secrets
+    2. Key: `GOOGLE_DRIVE_FOLDER`
+    3. Value: Your folder sharing link
     
-    return assessment_cols
-
-# --- SIDEBAR: Authentication ---
-st.sidebar.header("🔐 OneDrive Connection")
-
-# Check for authorization code in URL
-query_params = st.query_params
-if 'code' in query_params and not st.session_state.access_token:
-    with st.spinner("Authenticating..."):
-        auth_code = query_params['code']
-        result = get_token_from_code(auth_code)
-        
-        if 'access_token' in result:
-            st.session_state.access_token = result['access_token']
-            st.session_state.user_info = get_user_info(result['access_token'])
-            # Clear the code from URL
-            st.query_params.clear()
-            st.rerun()
-        else:
-            st.sidebar.error(f"Authentication failed: {result.get('error_description', 'Unknown error')}")
-
-# Show connection status
-if st.session_state.access_token:
-    if st.session_state.user_info:
-        st.sidebar.success(f"✅ Connected as: {st.session_state.user_info.get('userPrincipalName', 'User')}")
-    else:
-        st.sidebar.success("✅ Connected to OneDrive")
-    
-    if st.sidebar.button("🔓 Disconnect"):
-        st.session_state.access_token = None
-        st.session_state.user_info = None
-        st.session_state.selected_folder_id = None
-        st.session_state.csv_files = []
-        st.rerun()
-else:
-    st.sidebar.info("🔒 Not connected to OneDrive")
-    
-    if st.sidebar.button("🔐 Connect to OneDrive"):
-        auth_url = get_auth_url()
-        st.sidebar.markdown(f"[Click here to sign in with Microsoft]({auth_url})")
-        st.sidebar.info("After signing in, you'll be redirected back to this app")
-
-st.sidebar.markdown("---")
-
-# --- MAIN APP ---
-if not st.session_state.access_token:
-    st.info("👈 **Please connect to OneDrive** in the sidebar to access your files")
-    st.markdown("""
-    ### How to use this tool:
-    1. Click **"Connect to OneDrive"** in the sidebar
-    2. Sign in with your Microsoft account
-    3. Grant permission to read your files
-    4. Browse your OneDrive folders
-    5. Select 2 CSV files to compare
-    6. View comprehensive analysis and visualizations
-    
-    ### Features:
-    - 📊 Statistical analysis
-    - 📈 Distribution charts
-    - 🔴 Scatter plots for common students
-    - 📋 Detailed comparison tables
-    - ⬇️ Download results
+    For now, you can test locally by setting the folder link in the code.
     """)
     st.stop()
 
-# --- BROWSE ONEDRIVE ---
-st.sidebar.subheader("📁 Browse OneDrive")
+with st.spinner("Loading course data from Google Drive..."):
+    courses_data = load_course_data_from_drive(GOOGLE_DRIVE_FOLDER)
 
-# List folders
-folders = list_onedrive_folders(st.session_state.access_token)
-folder_options = {"Root": None}
-for folder in folders:
-    folder_options[folder['name']] = folder['id']
+if not courses_data:
+    st.warning("No course data found in Google Drive folder.")
+    st.info("Make sure your CSV files are uploaded to the shared folder.")
+    st.stop()
 
-selected_folder_name = st.sidebar.selectbox(
-    "Select folder:",
-    options=list(folder_options.keys()),
-    key="folder_select"
-)
+st.success(f"✅ Loaded {len(courses_data)} courses from Google Drive!")
 
-selected_folder_id = folder_options[selected_folder_name]
+# Show available courses
+st.subheader("📁 Available Courses")
+for course in courses_data:
+    st.write(f"- **{course['course']}** ({course['count']} students)")
 
-if selected_folder_id != st.session_state.selected_folder_id:
-    st.session_state.selected_folder_id = selected_folder_id
-    st.session_state.csv_files = list_csv_files(st.session_state.access_token, selected_folder_id)
+st.markdown("---")
 
-# Show CSV files
-if len(st.session_state.csv_files) > 0:
-    st.sidebar.success(f"📄 Found {len(st.session_state.csv_files)} CSV files")
+# Generate Report Button
+if st.button("📊 Generate Comparison Report", type="primary"):
+    # Store in session state
+    st.session_state.courses_data = courses_data
+    st.session_state.lic_info = {
+        'name': lic_name,
+        'phone': lic_phone,
+        'course_code': lic_course
+    }
+    st.success(f"✅ Report generated with {len(courses_data)} course(s)!")
+
+# Display comparison table if data exists
+if 'courses_data' in st.session_state and st.session_state.courses_data:
+    st.markdown("---")
+    st.header("📊 Course Comparison Summary")
     
-    csv_file_options = {file['name']: file['id'] for file in st.session_state.csv_files}
+    # Create comparison dataframe
+    comparison_data = []
     
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📊 Select Files to Compare")
+    # Statistics rows
+    stats_rows = [
+        ('Number of Students', 'count', '.0f'),
+        ('Mean', 'mean', '.2f'),
+        ('Median', 'median', '.2f'),
+        ('Std Dev', 'std', '.2f'),
+        ('Min', 'min', '.2f'),
+        ('Max', 'max', '.2f'),
+        ('25th Percentile', 'q25', '.2f'),
+        ('75th Percentile', 'q75', '.2f'),
+        ('% HD', 'hd_pct', '.1f'),
+        ('% DN', 'dn_pct', '.1f'),
+        ('% CR', 'cr_pct', '.1f'),
+        ('% PS', 'ps_pct', '.1f'),
+        ('% FL', 'fl_pct', '.1f')
+    ]
     
-    file1_name = st.sidebar.selectbox("File 1:", options=list(csv_file_options.keys()), key="file1_select")
-    file2_name = st.sidebar.selectbox("File 2:", options=list(csv_file_options.keys()), key="file2_select", 
-                                     index=min(1, len(csv_file_options)-1))
-    
-    if st.sidebar.button("📊 Load and Analyze Files"):
-        with st.spinner("Downloading files from OneDrive..."):
-            # Download files
-            file1_content = download_file_content(st.session_state.access_token, csv_file_options[file1_name])
-            file2_content = download_file_content(st.session_state.access_token, csv_file_options[file2_name])
-            
-            if file1_content and file2_content:
-                st.session_state.file1_df = pd.read_csv(pd.io.common.BytesIO(file1_content))
-                st.session_state.file2_df = pd.read_csv(pd.io.common.BytesIO(file2_content))
-                st.session_state.file1_name = file1_name
-                st.session_state.file2_name = file2_name
-                st.session_state.files_loaded = True
-                st.success("✅ Files loaded successfully!")
-                st.rerun()
+    for label, key, fmt in stats_rows:
+        row = {'Statistic': label}
+        for course in st.session_state.courses_data:
+            value = course[key]
+            if 'pct' in key:
+                row[course['course']] = f"{value:{fmt}}%"
             else:
-                st.error("❌ Failed to download files")
-else:
-    st.sidebar.warning(f"⚠️ No CSV files found in '{selected_folder_name}'")
-    st.info(f"No CSV files found in the selected folder. Please select a different folder or upload CSV files to your OneDrive.")
-
-# --- ANALYSIS SECTION ---
-if 'files_loaded' in st.session_state and st.session_state.files_loaded:
-    try:
-        df1_orig = process_dataframe(st.session_state.file1_df.copy())
-        df2_orig = process_dataframe(st.session_state.file2_df.copy())
-        
-        file1 = st.session_state.file1_name
-        file2 = st.session_state.file2_name
-        
-        # Get available assessment columns
-        assessment_cols_file1 = get_assessment_columns(df1_orig)
-        assessment_cols_file2 = get_assessment_columns(df2_orig)
-        
-        # Column selection
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("📊 Select Columns to Compare")
-        
-        st.sidebar.markdown(f"**File 1:** {file1}")
-        selected_col1 = st.sidebar.selectbox("Select column:", assessment_cols_file1, key="col1")
-        
-        st.sidebar.markdown(f"**File 2:** {file2}")
-        selected_col2 = st.sidebar.selectbox("Select column:", assessment_cols_file2, key="col2")
-        
-        # Map columns
-        col_d_name_file1 = df1_orig.columns[3]
-        col_d_name_file2 = df2_orig.columns[3]
-        
-        if selected_col1 == col_d_name_file1:
-            col1_name = 'Final_Mark'
-        else:
-            col1_name = selected_col1
-            df1_orig[selected_col1] = pd.to_numeric(df1_orig[selected_col1], errors='coerce')
-        
-        if selected_col2 == col_d_name_file2:
-            col2_name = 'Final_Mark'
-        else:
-            col2_name = selected_col2
-            df2_orig[selected_col2] = pd.to_numeric(df2_orig[selected_col2], errors='coerce')
-        
-        display_col1 = selected_col1
-        display_col2 = selected_col2
-        
-        # Find common students
-        common_ids = set(df1_orig['Student ID']) & set(df2_orig['Student ID'])
-        
-        st.header("📈 Analysis & Comparison")
-        
-        # Student Overview
-        st.subheader("👥 Student Overview")
-        overview_col1, overview_col2, overview_col3 = st.columns(3)
-        overview_col1.metric("📄 Students in File 1", len(df1_orig))
-        overview_col2.metric("📄 Students in File 2", len(df2_orig))
-        overview_col3.metric("🔗 Students in BOTH", len(common_ids))
-        
-        # Distribution Analysis
-        st.subheader("📊 Distribution Analysis - ALL Students")
-        st.info("These distributions show ALL students from each file")
-        
-        fig_dist, axes = plt.subplots(2, 2, figsize=(16, 12))
-        
-        # File 1 Distribution
-        data1_full = df1_orig[col1_name].dropna()
-        data1_common = df1_orig[df1_orig['Student ID'].isin(common_ids)][col1_name].dropna()
-        
-        axes[0, 0].hist(data1_full, bins=20, color='lightblue', alpha=0.7, edgecolor='black', label='All Students')
-        axes[0, 0].hist(data1_common, bins=20, color='red', alpha=0.6, edgecolor='black', label='Common Students')
-        axes[0, 0].axvline(data1_full.mean(), color='blue', linestyle='--', linewidth=2, label=f'Mean (All): {data1_full.mean():.1f}')
-        axes[0, 0].axvline(data1_common.mean(), color='darkred', linestyle='--', linewidth=2, label=f'Mean (Common): {data1_common.mean():.1f}')
-        axes[0, 0].set_xlabel(display_col1, fontweight='bold')
-        axes[0, 0].set_ylabel('Frequency')
-        axes[0, 0].set_title(f'{file1} - {display_col1}\nTotal: {len(data1_full)} | Common: {len(data1_common)}', fontweight='bold')
-        axes[0, 0].legend()
-        axes[0, 0].grid(True, alpha=0.3)
-        
-        # File 2 Distribution
-        data2_full = df2_orig[col2_name].dropna()
-        data2_common = df2_orig[df2_orig['Student ID'].isin(common_ids)][col2_name].dropna()
-        
-        axes[0, 1].hist(data2_full, bins=20, color='lightcoral', alpha=0.7, edgecolor='black', label='All Students')
-        axes[0, 1].hist(data2_common, bins=20, color='red', alpha=0.6, edgecolor='black', label='Common Students')
-        axes[0, 1].axvline(data2_full.mean(), color='coral', linestyle='--', linewidth=2, label=f'Mean (All): {data2_full.mean():.1f}')
-        axes[0, 1].axvline(data2_common.mean(), color='darkred', linestyle='--', linewidth=2, label=f'Mean (Common): {data2_common.mean():.1f}')
-        axes[0, 1].set_xlabel(display_col2, fontweight='bold')
-        axes[0, 1].set_ylabel('Frequency')
-        axes[0, 1].set_title(f'{file2} - {display_col2}\nTotal: {len(data2_full)} | Common: {len(data2_common)}', fontweight='bold')
-        axes[0, 1].legend()
-        axes[0, 1].grid(True, alpha=0.3)
-        
-        # Box Plot
-        fig_dist.delaxes(axes[1, 1])
-        axes[1, 0] = plt.subplot(2, 1, 2)
-        
-        box_data = [data1_full, data1_common, data2_full, data2_common]
-        box_labels = [f'File 1\nAll\n(n={len(data1_full)})', f'File 1\nCommon\n(n={len(data1_common)})',
-                     f'File 2\nAll\n(n={len(data2_full)})', f'File 2\nCommon\n(n={len(data2_common)})']
-        box_colors = ['lightblue', 'red', 'lightcoral', 'darkred']
-        
-        bp = axes[1, 0].boxplot(box_data, labels=box_labels, patch_artist=True, widths=0.6)
-        for patch, color in zip(bp['boxes'], box_colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.7)
-        axes[1, 0].set_ylabel('Score', fontweight='bold')
-        axes[1, 0].set_title('Box Plot Comparison', fontweight='bold')
-        axes[1, 0].grid(True, alpha=0.3, axis='y')
-        
-        plt.tight_layout()
-        st.pyplot(fig_dist)
-        
-        st.markdown("---")
-        
-        # Filter Selection
-        st.subheader("🔍 Analysis Filter")
-        filter_option = st.radio(
-            "Analyze which students?",
-            ["🌍 ALL Students", "🎯 ONLY Students in BOTH Files"],
-            index=0,
-            horizontal=True
-        )
-        show_only_common = (filter_option == "🎯 ONLY Students in BOTH Files")
-        
-        st.markdown("---")
-        
-        # Apply Filter
-        if show_only_common:
-            df1 = df1_orig[df1_orig['Student ID'].isin(common_ids)].copy()
-            df2 = df2_orig[df2_orig['Student ID'].isin(common_ids)].copy()
-            st.success(f"🎯 Analyzing COMMON students only: {len(common_ids)} students")
-        else:
-            df1 = df1_orig.copy()
-            df2 = df2_orig.copy()
-            st.info(f"🌍 Analyzing ALL students | File 1: {len(df1)} | File 2: {len(df2)} | Common: {len(common_ids)}")
-        
-        # Statistical Summary
-        st.subheader(f"📊 Statistical Summary - {'COMMON' if show_only_common else 'ALL'} Students")
-        
-        col_left, col_right = st.columns(2)
-        
-        with col_left:
-            st.markdown(f"### 📄 {file1}")
-            stats1 = df1[col1_name].describe()
-            stats_df1 = pd.DataFrame({
-                'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', '25%', 'Median', '75%', 'Max'],
-                'Value': [f"{stats1['count']:.0f}", f"{stats1['mean']:.2f}", f"{stats1['std']:.2f}",
-                         f"{stats1['min']:.2f}", f"{stats1['25%']:.2f}", f"{stats1['50%']:.2f}",
-                         f"{stats1['75%']:.2f}", f"{stats1['max']:.2f}"]
-            })
-            st.dataframe(stats_df1, use_container_width=True, hide_index=True)
-            
-            st.markdown("**📊 Grade Distribution**")
-            dist1 = get_grade_distribution(df1)
-            grade_df1 = pd.DataFrame([
-                {'Grade': grade, 'Count': data['count'], 'Percentage': f"{data['percentage']:.1f}%"}
-                for grade, data in dist1.items()
-            ])
-            st.dataframe(grade_df1, use_container_width=True, hide_index=True)
-        
-        with col_right:
-            st.markdown(f"### 📄 {file2}")
-            stats2 = df2[col2_name].describe()
-            stats_df2 = pd.DataFrame({
-                'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', '25%', 'Median', '75%', 'Max'],
-                'Value': [f"{stats2['count']:.0f}", f"{stats2['mean']:.2f}", f"{stats2['std']:.2f}",
-                         f"{stats2['min']:.2f}", f"{stats2['25%']:.2f}", f"{stats2['50%']:.2f}",
-                         f"{stats2['75%']:.2f}", f"{stats2['max']:.2f}"]
-            })
-            st.dataframe(stats_df2, use_container_width=True, hide_index=True)
-            
-            st.markdown("**📊 Grade Distribution**")
-            dist2 = get_grade_distribution(df2)
-            grade_df2 = pd.DataFrame([
-                {'Grade': grade, 'Count': data['count'], 'Percentage': f"{data['percentage']:.1f}%"}
-                for grade, data in dist2.items()
-            ])
-            st.dataframe(grade_df2, use_container_width=True, hide_index=True)
-        
-        # Scatter Plot (only for common students)
-        if show_only_common and len(common_ids) > 0:
-            st.subheader(f"📈 Scatter Plot: {display_col1} vs {display_col2}")
-            
-            plot_df1 = df1[['Student ID', col1_name]].copy()
-            plot_df1.columns = ['Student ID', 'Metric1']
-            plot_df2 = df2[['Student ID', col2_name]].copy()
-            plot_df2.columns = ['Student ID', 'Metric2']
-            plot_df = plot_df1.merge(plot_df2, on='Student ID', how='inner').dropna()
-            
-            fig, ax = plt.subplots(figsize=(12, 8))
-            
-            if len(plot_df) > 0:
-                ax.scatter(plot_df['Metric1'], plot_df['Metric2'], 
-                          c='red', alpha=0.7, s=100, label=f'Common Students (n={len(plot_df)})')
-                
-                min_val = 0
-                max_val = max(plot_df['Metric1'].max(), plot_df['Metric2'].max())
-                ax.plot([min_val, max_val], [min_val, max_val], 
-                       'k--', alpha=0.3, linewidth=1, label='Equal Performance Line')
-                
-                ax.set_xlabel(f'{display_col1} - {file1}', fontsize=12, fontweight='bold')
-                ax.set_ylabel(f'{display_col2} - {file2}', fontsize=12, fontweight='bold')
-                ax.set_title(f'{display_col1} vs {display_col2}\n(Students in BOTH files)', fontsize=14, fontweight='bold')
-                ax.legend(fontsize=10)
-                ax.grid(True, alpha=0.3)
-                
-                st.pyplot(fig)
-            
-            # Comparison Table
-            st.subheader("📋 Detailed Comparison")
-            
-            common_df1 = df1_orig[df1_orig['Student ID'].isin(common_ids)][['Student ID', col1_name]].copy()
-            common_df2 = df2_orig[df2_orig['Student ID'].isin(common_ids)][['Student ID', col2_name]].copy()
-            
-            comparison_df = common_df1.merge(common_df2, on='Student ID')
-            comparison_df.columns = ['Student ID', f'{display_col1} (File1)', f'{display_col2} (File2)']
-            comparison_df['Difference'] = comparison_df[f'{display_col2} (File2)'] - comparison_df[f'{display_col1} (File1)']
-            comparison_df['Change'] = comparison_df['Difference'].apply(
-                lambda x: '📈 Higher' if x > 5 else ('📉 Lower' if x < -5 else '➡️ Similar')
-            )
-            comparison_df = comparison_df.sort_values('Difference', ascending=False).reset_index(drop=True)
-            
-            st.dataframe(comparison_df, use_container_width=True)
-            
-            col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Higher in File 2", f"{(comparison_df['Difference'] > 5).sum()} students")
-            col_b.metric("Lower in File 2", f"{(comparison_df['Difference'] < -5).sum()} students")
-            col_c.metric("Similar", f"{(abs(comparison_df['Difference']) <= 5).sum()} students")
-            
-            csv = comparison_df.to_csv(index=False)
-            st.download_button("⬇️ Download Comparison Table", csv, "comparison_table.csv", "text/csv")
+                row[course['course']] = f"{value:{fmt}}"
+        # Add empty "This Year" column
+        row['This Year'] = ''
+        comparison_data.append(row)
     
-    except Exception as e:
-        st.error(f"Error processing files: {str(e)}")
-        st.exception(e)
+    comparison_df = pd.DataFrame(comparison_data)
+    
+    # Display table
+    st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+    
+    # Download options
+    st.markdown("---")
+    st.header("📥 Download Report")
+    
+    col_download1, col_download2 = st.columns(2)
+    
+    with col_download1:
+        # CSV Download
+        csv = comparison_df.to_csv(index=False)
+        st.download_button(
+            "⬇️ Download as CSV",
+            csv,
+            "course_comparison.csv",
+            "text/csv",
+            use_container_width=True
+        )
+    
+    with col_download2:
+        # Word Document Download using Python
+        if st.button("📄 Generate Word Document", use_container_width=True):
+            with st.spinner("Generating Word document..."):
+                try:
+                    from docx import Document
+                    from docx.shared import Inches, Pt, RGBColor
+                    from docx.enum.text import WD_ALIGN_PARAGRAPH
+                    from docx.oxml.ns import qn
+                    from docx.oxml import OxmlElement
+                    
+                    # Create document
+                    doc = Document()
+                    
+                    # Set default font
+                    style = doc.styles['Normal']
+                    font = style.font
+                    font.name = 'Arial'
+                    font.size = Pt(11)
+                    
+                    # Title
+                    title = doc.add_paragraph()
+                    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    title_run = title.add_run("Course Comparison Report")
+                    title_run.font.size = Pt(28)
+                    title_run.font.bold = True
+                    title_run.font.color.rgb = RGBColor(0, 0, 0)
+                    
+                    doc.add_paragraph()  # Spacing
+                    
+                    # LIC Information Section
+                    heading = doc.add_paragraph()
+                    heading_run = heading.add_run("Lecturer in Charge Information")
+                    heading_run.font.size = Pt(16)
+                    heading_run.font.bold = True
+                    heading_run.font.color.rgb = RGBColor(0, 0, 0)
+                    
+                    # LIC details
+                    p1 = doc.add_paragraph()
+                    p1.add_run("Name: ").bold = True
+                    p1.add_run(st.session_state.lic_info['name'])
+                    
+                    p2 = doc.add_paragraph()
+                    p2.add_run("Phone: ").bold = True
+                    p2.add_run(st.session_state.lic_info['phone'])
+                    
+                    p3 = doc.add_paragraph()
+                    p3.add_run("Course Code: ").bold = True
+                    p3.add_run(st.session_state.lic_info['course_code'])
+                    
+                    p4 = doc.add_paragraph()
+                    p4.add_run("Report Generated: ").bold = True
+                    p4.add_run(datetime.now().strftime('%B %d, %Y at %H:%M'))
+                    
+                    doc.add_paragraph()  # Spacing
+                    
+                    # Comparison Table Section
+                    heading2 = doc.add_paragraph()
+                    heading2_run = heading2.add_run("Course Comparison")
+                    heading2_run.font.size = Pt(16)
+                    heading2_run.font.bold = True
+                    heading2_run.font.color.rgb = RGBColor(0, 0, 0)
+                    
+                    # Create table
+                    num_courses = len(st.session_state.courses_data)
+                    table = doc.add_table(rows=14, cols=num_courses + 2)  # +2 for Statistic column and This Year column
+                    table.style = 'Light Grid Accent 1'
+                    
+                    # Helper function to shade cells
+                    def shade_cell(cell, color):
+                        shading_elm = OxmlElement('w:shd')
+                        shading_elm.set(qn('w:fill'), color)
+                        cell._element.get_or_add_tcPr().append(shading_elm)
+                    
+                    # Header row
+                    header_cells = table.rows[0].cells
+                    header_cells[0].text = "Statistic"
+                    for idx, course in enumerate(st.session_state.courses_data):
+                        header_cells[idx + 1].text = course['course']
+                    # Add "This Year" as last column
+                    header_cells[num_courses + 1].text = "This Year"
+                    
+                    # Style header row
+                    for cell in header_cells:
+                        shade_cell(cell, "4472C4")
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.bold = True
+                                run.font.color.rgb = RGBColor(255, 255, 255)
+                                run.font.size = Pt(11)
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    
+                    # Data rows
+                    stats_data = [
+                        ('Number of Students', 'count', lambda v: f'{int(v)}'),
+                        ('Mean', 'mean', lambda v: f'{v:.2f}'),
+                        ('Median', 'median', lambda v: f'{v:.2f}'),
+                        ('Std Dev', 'std', lambda v: f'{v:.2f}'),
+                        ('Min', 'min', lambda v: f'{v:.2f}'),
+                        ('Max', 'max', lambda v: f'{v:.2f}'),
+                        ('25th Percentile', 'q25', lambda v: f'{v:.2f}'),
+                        ('75th Percentile', 'q75', lambda v: f'{v:.2f}'),
+                        ('% HD', 'hd_pct', lambda v: f'{v:.1f}%'),
+                        ('% DN', 'dn_pct', lambda v: f'{v:.1f}%'),
+                        ('% CR', 'cr_pct', lambda v: f'{v:.1f}%'),
+                        ('% PS', 'ps_pct', lambda v: f'{v:.1f}%'),
+                        ('% FL', 'fl_pct', lambda v: f'{v:.1f}%')
+                    ]
+                    
+                    for row_idx, (label, key, formatter) in enumerate(stats_data, start=1):
+                        row_cells = table.rows[row_idx].cells
+                        
+                        # First column - statistic name
+                        row_cells[0].text = label
+                        row_cells[0].paragraphs[0].runs[0].font.bold = True
+                        
+                        # Data columns
+                        for col_idx, course in enumerate(st.session_state.courses_data):
+                            row_cells[col_idx + 1].text = formatter(course[key])
+                            row_cells[col_idx + 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        
+                        # Add empty "This Year" cell
+                        row_cells[num_courses + 1].text = ""
+                        row_cells[num_courses + 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        
+                        # Alternate row shading
+                        if row_idx % 2 == 0:
+                            for cell in row_cells:
+                                shade_cell(cell, "F2F2F2")
+                    
+                    # Save to bytes
+                    doc_io = io.BytesIO()
+                    doc.save(doc_io)
+                    doc_io.seek(0)
+                    
+                    st.success("✅ Word document generated successfully!")
+                    st.download_button(
+                        "⬇️ Download Word Document",
+                        doc_io.getvalue(),
+                        "course_comparison_report.docx",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                
+                except ImportError:
+                    st.error("❌ python-docx package not installed")
+                    st.markdown("""
+                    **To enable Word export, install python-docx:**
+                    ```
+                    pip install python-docx
+                    ```
+                    
+                    Then refresh this page and try again.
+                    """)
+                except Exception as e:
+                    st.error(f"Error generating document: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+else:
+    st.info("👆 Click 'Generate Comparison Report' to see the results!")
